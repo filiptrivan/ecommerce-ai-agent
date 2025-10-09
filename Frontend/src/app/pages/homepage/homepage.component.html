@@ -1,0 +1,12 @@
+<ng-container *transloco="let t">
+
+    <spiderly-button label="Save products to db" (onClick)="saveProductsToDb()"></spiderly-button>
+
+    <div style="position: absolute; right: 10px; bottom: 10px; border: 1px red solid; width: 400px; height: 400px;">
+        {{response}}
+        <div style="position: absolute; bottom: 0; width: 100%;">
+            <textarea pInputText [(ngModel)]="prompt" style="width: 100%;"></textarea>
+            <spiderly-button label="Send" (onClick)="sendMessage()"></spiderly-button>
+        </div>
+    </div>
+</ng-container>
