@@ -126,6 +126,8 @@ export class TranslateLabelsGeneratedService {
                 return this.translocoService.translate('Text');
             case 'category':
                 return this.translocoService.translate('Category');
+            case 'price':
+                return this.translocoService.translate('Price');
             case 'ipAddress':
                 return this.translocoService.translate('IpAddress');
             case 'tokenString':

@@ -24,9 +24,12 @@ namespace EcommerceAIAgent.Business.DTO
         [Name("category")]
         public string Category { get; set; }
 
-        public string ToSearchableText()
-        {
-            return $"{Title}. {Description}. {Text}. Category: {Category}";
-        }
+        /// <summary>
+        /// General guidance price, we are saying to LLM that it needs to check via API for the exact price
+        /// </summary>
+        [Name("price")]
+        public string Price { get; set; }
     }
+
+
 }

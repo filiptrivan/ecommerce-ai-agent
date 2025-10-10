@@ -203,6 +203,7 @@ export class QdrantProduct extends BaseEntity
 	description?: string;
 	text?: string;
 	category?: string;
+	price?: string;
 
     constructor(
     {
@@ -210,13 +211,15 @@ export class QdrantProduct extends BaseEntity
 		title,
 		description,
 		text,
-		category
+		category,
+		price
     }:{
         id?: string;
 		title?: string;
 		description?: string;
 		text?: string;
-		category?: string;     
+		category?: string;
+		price?: string;     
     } = {}
     ) {
         super('QdrantProduct'); 
@@ -226,6 +229,7 @@ export class QdrantProduct extends BaseEntity
 		this.description = description;
 		this.text = text;
 		this.category = category;
+		this.price = price;
     }
 }
 

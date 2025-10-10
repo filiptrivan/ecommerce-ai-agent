@@ -495,8 +495,7 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
 
                 foreach (QdrantProductDTO product in batch)
                 {
-                    string text = product.ToSearchableText();
-                    ReadOnlyMemory<float> embedding = await GetEmbeddingAsync(text);
+                    ReadOnlyMemory<float> embedding = await GetEmbeddingAsync(product.Text);
 
                     points.Add(new PointStruct
                     {
@@ -512,42 +511,32 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
             }
         }
 
-        /// <summary>
-        /// TODO: If it's needed avarage only the html field, also we should clean up the html and make it in markdown
-        /// </summary>
-        /// <param name="text"></param>
-        /// <returns></returns>
         private async Task<ReadOnlyMemory<float>> GetEmbeddingAsync(string text)
         {
-            const int chunkSize = 25000;
-
             if (string.IsNullOrWhiteSpace(text))
                 return ReadOnlyMemory<float>.Empty;
 
-            if (text.Length <= chunkSize)
-            {
-                OpenAIEmbedding embedding = await _openAIEmbeddingClient.GenerateEmbeddingAsync(input: text);
-                return embedding.ToFloats();
-            }
+            List<string> chunks = LlmHtmlProcessor.HtmlToLlmMarkdown(text);
 
-            // Split into chunks if too long
             List<ReadOnlyMemory<float>> vectors = new();
-            for (int i = 0; i < text.Length; i += chunkSize)
+
+            foreach (string chunk in chunks)
             {
-                string chunk = text.Substring(i, Math.Min(chunkSize, text.Length - i));
                 OpenAIEmbedding embedding = await _openAIEmbeddingClient.GenerateEmbeddingAsync(input: chunk);
                 vectors.Add(embedding.ToFloats());
             }
 
-            // Average them
+            // Average vectors
             int dim = vectors[0].Length;
             float[] avg = new float[dim];
+
             foreach (ReadOnlyMemory<float> vec in vectors)
             {
                 ReadOnlySpan<float> span = vec.Span;
                 for (int i = 0; i < dim; i++)
                     avg[i] += span[i];
             }
+
             for (int i = 0; i < dim; i++)
                 avg[i] /= vectors.Count;
 
