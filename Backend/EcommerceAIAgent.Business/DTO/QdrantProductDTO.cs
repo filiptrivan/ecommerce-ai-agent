@@ -12,17 +12,8 @@ namespace EcommerceAIAgent.Business.DTO
         [Name("id")]
         public string Id { get; set; }
 
-        [Name("title")]
-        public string Title { get; set; }
-
-        [Name("description")]
-        public string Description { get; set; }
-
         [Name("text")]
         public string Text { get; set; }
-
-        [Name("category")]
-        public string Category { get; set; }
 
         /// <summary>
         /// General guidance price, we are saying to LLM that it needs to check via API for the exact price

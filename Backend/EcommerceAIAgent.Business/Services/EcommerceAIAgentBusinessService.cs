@@ -237,7 +237,7 @@ namespace EcommerceAIAgent.Business.Services
 
         public async Task SaveProductsToVectorDb()
         {
-            List<QdrantProductDTO> products = LoadProducts(@"C:\Users\user\Documents\Projects\EcommerceAIAgent\data\products.csv"); // TODO FT: In the production we should switch to the azure blob storage.
+            List<QdrantProductDTO> products = LoadProducts(@"C:\Users\user\Documents\Projects\RecommenderSystems\data\products.csv"); // TODO FT: In the production we should switch to the azure blob storage.
             await SaveProductsToVectorDb(products);
         }
 
@@ -501,7 +501,7 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
                     {
                         Id = ulong.Parse(product.Id),
                         Vectors = embedding.ToArray(),
-                        Payload = { ["title"] = product.Title }
+                        Payload = { ["price"] = product.Price }
                     });
                 }
 

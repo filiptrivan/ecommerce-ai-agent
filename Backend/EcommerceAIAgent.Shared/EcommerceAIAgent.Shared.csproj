@@ -5,14 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
-  <ItemGroup>
-<!--         <ProjectReference Include="..\..\..\spiderly\Spiderly.Shared\Spiderly.Shared.csproj" /> -->
-  </ItemGroup>
-
-  <ItemGroup>
-  </ItemGroup>
-
 	<ItemGroup>
+		<PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+		<PackageReference Include="ReverseMarkdown" Version="4.7.0" />
 		<PackageReference Include="System.IO.FileSystem.Primitives" Version="4.3.0" />
 		<PackageReference Include="System.IO.FileSystem" Version="4.3.0" />
 		<PackageReference Include="System.Runtime.Handles" Version="4.3.0" />

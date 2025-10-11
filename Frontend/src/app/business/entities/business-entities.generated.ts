@@ -199,36 +199,24 @@ export class NotificationMainUIForm extends BaseEntity
 export class QdrantProduct extends BaseEntity
 {
     id?: string;
-	title?: string;
-	description?: string;
 	text?: string;
-	category?: string;
 	price?: string;
 
     constructor(
     {
         id,
-		title,
-		description,
 		text,
-		category,
 		price
     }:{
         id?: string;
-		title?: string;
-		description?: string;
 		text?: string;
-		category?: string;
 		price?: string;     
     } = {}
     ) {
         super('QdrantProduct'); 
 
         this.id = id;
-		this.title = title;
-		this.description = description;
 		this.text = text;
-		this.category = category;
 		this.price = price;
     }
 }
