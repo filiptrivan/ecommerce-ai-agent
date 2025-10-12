@@ -7,21 +7,28 @@ using ReverseMarkdown;
 
 public static class LlmHtmlProcessor
 {
+    static private readonly Config _converterConfig = new Config
+    {
+        GithubFlavored = true,
+        RemoveComments = true,
+        SmartHrefHandling = true
+    };
+
     public static List<string> HtmlToLlmMarkdown(
         string htmlInput,
         int chunkSize = 22000,
         int chunkOverlap = 800)
     {
         // Parse and clean HTML
-        var doc = new HtmlDocument();
+        HtmlDocument doc = new();
         doc.LoadHtml(htmlInput);
 
         // Remove all <div> elements that contain class "key-alt"
         // e.g. Za pretragu DeWalt elektricne busilice, možete koristiti sledece varijacije kljucnih reci: DeWalt DWP849X...
-        var keyAltNodes = doc.DocumentNode.SelectNodes("//div[contains(@class, 'key-alt')]");
+        HtmlNodeCollection keyAltNodes = doc.DocumentNode.SelectNodes("//div[contains(@class, 'key-alt')]");
         if (keyAltNodes != null)
         {
-            foreach (var node in keyAltNodes.ToArray())
+            foreach (HtmlNode node in keyAltNodes.ToArray())
                 node.Remove();
         }
 
@@ -29,19 +36,19 @@ public static class LlmHtmlProcessor
         string[] removeTags = { "iframe", "form", "img" };
         foreach (var tag in removeTags)
         {
-            var nodes = doc.DocumentNode.SelectNodes("//" + tag);
+            HtmlNodeCollection nodes = doc.DocumentNode.SelectNodes("//" + tag);
             if (nodes == null) continue;
-            foreach (var node in nodes.ToArray())
+            foreach (HtmlNode node in nodes.ToArray())
                 node.Remove();
         }
 
         // Replace <br> with newline
-        var brNodes = doc.DocumentNode.SelectNodes("//br");
+        HtmlNodeCollection brNodes = doc.DocumentNode.SelectNodes("//br");
         if (brNodes != null)
         {
-            foreach (var br in brNodes.ToArray())
+            foreach (HtmlNode br in brNodes.ToArray())
             {
-                var newline = doc.CreateTextNode("\n");
+                HtmlTextNode newline = doc.CreateTextNode("\n");
                 br.ParentNode.ReplaceChild(newline, br);
             }
         }
@@ -52,49 +59,44 @@ public static class LlmHtmlProcessor
         string decodedHtml = WebUtility.HtmlDecode(cleanHtml);
 
         // Convert HTML → Markdown
-        var config = new Config
-        {
-            GithubFlavored = true,
-            RemoveComments = true,
-            SmartHrefHandling = true
-        };
-        var converter = new Converter(config);
+        Converter converter = new Converter(_converterConfig);
         string markdownText = converter.Convert(decodedHtml);
 
-        // Chunk text intelligently
-        var chunks = SplitIntoChunks(markdownText, chunkSize, chunkOverlap);
+        List<string> chunks = SplitIntoChunks(markdownText, chunkSize, chunkOverlap);
 
         return chunks;
     }
 
     private static List<string> SplitIntoChunks(string text, int chunkSize, int chunkOverlap)
     {
-        var separators = new[] { "\n## ", "\n# ", "\n", ". ", " " };
-        var chunks = new List<string>();
+        if (string.IsNullOrEmpty(text))
+            return [];
+
+        if (text.Length <= chunkSize)
+            return [text];
+
+        List<string> chunks = new();
+
+        int numberOfChunks = (int)Math.Ceiling((double)text.Length / chunkSize);
+        int baseChunkSize = text.Length / numberOfChunks;
 
         int start = 0;
-        while (start < text.Length)
-        {
-            int end = Math.Min(start + chunkSize, text.Length);
-            int bestSplit = end;
 
-            // Try to split at a natural boundary
-            foreach (var sep in separators)
+        for (int i = 0; i < numberOfChunks; i++)
+        {
+            if (i == numberOfChunks - 1)
             {
-                int idx = text.LastIndexOf(sep, end, StringComparison.Ordinal);
-                if (idx > start && idx < end)
-                {
-                    bestSplit = idx + sep.Length;
-                    break;
-                }
+                chunks.Add(text.Substring(start));
+                break;
             }
 
-            string chunk = text.Substring(start, bestSplit - start).Trim();
-            if (!string.IsNullOrEmpty(chunk))
-                chunks.Add(chunk);
+            int end = start + baseChunkSize;
 
-            start = bestSplit - chunkOverlap;
-            if (start < 0) start = 0;
+            int length = Math.Min(end + chunkOverlap, text.Length) - start;
+
+            chunks.Add(text.Substring(start, length));
+
+            start += baseChunkSize;
         }
 
         return chunks;
