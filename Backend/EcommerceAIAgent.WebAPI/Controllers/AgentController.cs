@@ -35,9 +35,9 @@ namespace EcommerceAIAgent.WebAPI.Controllers
 
         [HttpGet]
         [AuthGuard]
-        public async Task<string> SendMessage(string prompt)
+        public async Task<string> SendMessage(string userPrompt)
         {
-            return await _ecommerceAIAgentBusinessService.SendMessage(prompt);
+            return await _ecommerceAIAgentBusinessService.SendMessage(null, userPrompt);
         }
     }
 }

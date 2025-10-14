@@ -1,4 +1,5 @@
-using Qdrant.Client;
+﻿using Qdrant.Client;
+using Qdrant.Client.Grpc;
 using EcommerceAIAgent.Business.Entities;
 using EcommerceAIAgent.Business.DTO;
 using EcommerceAIAgent.Business.Enums;
@@ -19,8 +20,14 @@ using System.Globalization;
 using CsvHelper.Configuration;
 using CsvHelper;
 using OpenAI.Embeddings;
-using Qdrant.Client.Grpc;
 using Microsoft.Extensions.Logging;
+using OfficeOpenXml.FormulaParsing.Excel.Functions.Numeric;
+using System;
+using Newtonsoft.Json.Schema.Generation;
+using EcommerceAIAgent.Shared;
+using EcommerceAIAgent.Business.LlmResponses;
+using Google.Protobuf;
+using Microsoft.Extensions.Options;
 
 namespace EcommerceAIAgent.Business.Services
 {
@@ -40,6 +47,21 @@ namespace EcommerceAIAgent.Business.Services
         private readonly QdrantClient _qdrantClient;
 
         private readonly string _externalApiBaseURL = "https://api.readycms.io/GET/products/short/?namespace=prodavnicaalata";
+
+        private const string _systemPromptTemplate = """
+Ti si profesionalni web shop prodavac na sajtu www.prodavnicaalata.rs.
+Imaš dva maloprodajna objekta:
+- Vojislava Ilića 141g
+- Na Altini - Ugrinovačka 212
+
+VAŽNA PRAVILA:
+- Odgovaraj direktno i profesionalno
+- Nikad ne prikazuj ID proizvoda
+- Ako korisnik nije precizan, postavi jedno ili dva dodatna pitanja
+- Koristi funkcije za pretraživanje proizvoda kada je potrebno, ako ih ne nađeš iz prvog pokušaja, nema potrebe da ponavljaš pretragu sa sličnim upitom više puta, samo obavesti korisnika da nisi uspeo da pronađeš.
+- Ne spominji tehničke detalje (vektorska baza, ID-jeve, itd.)
+- Ako korisnik pita neko opšte pitanje o proizvodu iskoristi svoj osnovni model za odgovor.
+""";
 
         public EcommerceAIAgentBusinessService(
             IApplicationDbContext context,
@@ -241,99 +263,84 @@ namespace EcommerceAIAgent.Business.Services
             await SaveProductsToVectorDb(products);
         }
 
-        public async Task<string> SendMessage(string prompt)
+        public async Task<string> SendMessage(List<ChatMessage> chatHistory, string userPrompt)
         {
-            List<ChatMessage> messages = new List<ChatMessage>
-            {
-                new SystemChatMessage("""
-Ti si profesionalni web shop prodavac. 
-Samo ako ti korisnik trazi da pronadjes proizvod po SKU pozovi tool sa SKU, ako ne postoji to treba da kazes korisniku. 
-Ako ti korisnik opisno trazi neki proizvod ili skup proizvoda treba da pozoves tool koji pretrazuje uz pomoc vektorske baze podataka, ako ti je korisnik poslao los query za to, poboljsaj ga. 
-Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neodredjen onda ga pitaj dodatna pitanja.
-"""),
-                new UserChatMessage(prompt),
-            };
-
+            List<ChatMessage> chat = PrepareChat(chatHistory, userPrompt);
             ChatCompletionOptions options = new()
             {
-                Tools = { 
-                    searchProductBySKUTool, 
-                    searchProductsVectorized,
-                    searchProductByIdTool, 
-                },
+                Tools =
+                {
+                    searchProductsVectorizedTool,
+                    searchProductsByIdTool,
+                }
             };
 
             bool requiresAction;
-
             do
             {
                 requiresAction = false;
-                ChatCompletion completion = await _openAIChatClient.CompleteChatAsync(messages, options);
+                ChatCompletion completion = await _openAIChatClient.CompleteChatAsync(chat, options);
 
                 switch (completion.FinishReason)
                 {
                     case ChatFinishReason.Stop:
                         {
-                            // Add the assistant message to the conversation history.
-                            messages.Add(new AssistantChatMessage(completion));
+                            chat.Add(new AssistantChatMessage(completion));
                             break;
                         }
 
                     case ChatFinishReason.ToolCalls:
                         {
-                            // First, add the assistant message with tool calls to the conversation history.
-                            messages.Add(new AssistantChatMessage(completion));
+                            chat.Add(new AssistantChatMessage(completion));
 
-                            // Then, add a new tool message for each tool call that is resolved.
                             foreach (ChatToolCall toolCall in completion.ToolCalls)
                             {
                                 switch (toolCall.FunctionName)
                                 {
-                                    case nameof(SearchProductBySKU):
-                                        {
-                                            using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
-                                            bool hasProductSKU = argumentsJson.RootElement.TryGetProperty("productSKU", out JsonElement productSKU);
-
-                                            if (!hasProductSKU)
-                                                throw new ArgumentNullException(nameof(productSKU), $"The {nameof(productSKU)} argument is required.");
-
-                                            string toolResult = PrepareProductForContext(await SearchProductBySKU(productSKU.GetString()));
-
-                                            messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
-                                            break;
-                                        }
-
-                                    case nameof(SearchProductById):
-                                        {
-                                            using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
-                                            bool hasId = argumentsJson.RootElement.TryGetProperty("productId", out JsonElement productId);
-
-                                            if (!hasId)
-                                                throw new ArgumentNullException(nameof(productId), $"The {nameof(productId)} argument is required.");
-
-                                            string toolResult = PrepareProductForContext(await SearchProductById(productId.GetString()));
-
-                                            messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
-                                            break;
-                                        }
-
                                     case nameof(SearchProductsVectorized):
                                         {
                                             using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
                                             bool hasQuery = argumentsJson.RootElement.TryGetProperty("query", out JsonElement query);
+                                            bool hasLimit = argumentsJson.RootElement.TryGetProperty("limit", out JsonElement limit);
+                                            bool hasPriceLowerLimit = argumentsJson.RootElement.TryGetProperty("priceLowerLimit", out JsonElement priceLowerLimit);
+                                            bool hasPriceUpperLimit = argumentsJson.RootElement.TryGetProperty("priceUpperLimit", out JsonElement priceUpperLimit);
 
                                             if (!hasQuery)
                                                 throw new ArgumentNullException(nameof(query), $"The {nameof(query)} argument is required.");
 
-                                            List<string> toolResult = await SearchProductsVectorized(query.GetString());
+                                            if (!hasLimit)
+                                                throw new ArgumentNullException(nameof(limit), $"The {nameof(limit)} argument is required.");
 
-                                            messages.Add(new ToolChatMessage(toolCall.Id, $"Id-jevi proizvoda: {string.Join(", ", toolResult)}"));
+                                            List<string> toolResult = await SearchProductsVectorized(
+                                                query.GetString(),
+                                                limit.GetUInt64(),
+                                                hasPriceLowerLimit ? priceLowerLimit.GetInt32() : null,
+                                                hasPriceUpperLimit ? priceUpperLimit.GetInt32() : null
+                                            );
+
+                                            chat.Add(new ToolChatMessage(toolCall.Id, string.Join(", ", toolResult)));
+                                            break;
+                                        }
+
+                                    case nameof(SearchProductsById):
+                                        {
+                                            using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
+                                            bool hasIds = argumentsJson.RootElement.TryGetProperty("productIds", out JsonElement productIds);
+
+                                            if (!hasIds)
+                                                throw new ArgumentNullException(nameof(productIds), $"The {nameof(productIds)} argument is required.");
+
+                                            string toolResult = await GetMarkdownFormattedProducts(productIds.EnumerateArray()
+                                                .Select(x => x.GetString())
+                                                .ToList()
+                                            );
+
+                                            chat.Add(new ToolChatMessage(toolCall.Id, toolResult));
                                             break;
                                         }
 
                                     default:
                                         {
-                                            // Handle other unexpected calls.
                                             throw new NotImplementedException();
                                         }
                                 }
@@ -343,21 +350,12 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
                             break;
                         }
 
-                    case ChatFinishReason.Length:
-                        throw new NotImplementedException("Incomplete model output due to MaxTokens parameter or token limit exceeded.");
-
-                    case ChatFinishReason.ContentFilter:
-                        throw new NotImplementedException("Omitted content due to a content filter flag.");
-
-                    case ChatFinishReason.FunctionCall:
-                        throw new NotImplementedException("Deprecated in favor of tool calls.");
-
                     default:
                         throw new NotImplementedException(completion.FinishReason.ToString());
                 }
             } while (requiresAction);
 
-            ChatCompletion completionResult = await _openAIChatClient.CompleteChatAsync(messages);
+            ChatCompletion completionResult = await _openAIChatClient.CompleteChatAsync(chat);
             return completionResult.Content[0].Text;
         }
 
@@ -365,71 +363,96 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
 
         #region Tools
 
-        private async Task<List<string>> SearchProductsVectorized(string query)
+        private async Task<List<string>> SearchProductsVectorized(
+            string query,
+            ulong limit,
+            int? priceLowerLimit = null,
+            int? priceUpperLimit = null
+        )
         {
             ReadOnlyMemory<float> embedding = await GetEmbeddingAsync(query);
 
+            Filter filter = null;
+
+            if (priceLowerLimit.HasValue || priceUpperLimit.HasValue)
+            {
+                var range = new Qdrant.Client.Grpc.Range();
+
+                if (priceLowerLimit.HasValue)
+                    range.Gte = priceLowerLimit.Value;
+
+                if (priceUpperLimit.HasValue)
+                    range.Lte = priceUpperLimit.Value;
+
+                filter = new Filter
+                {
+                    Must =
+                    {
+                        new Condition
+                        {
+                            Field = new FieldCondition
+                            {
+                                Key = "price",
+                                Range = range
+                            }
+                        }
+                    }
+                };
+            }
+
             IReadOnlyList<ScoredPoint> searchResult = await _qdrantClient.SearchAsync(
-                SettingsProvider.Current.QdrantProductsTableName,
-                embedding,
-                limit: 5
+                collectionName: SettingsProvider.Current.QdrantProductsTableName,
+                vector: embedding,
+                filter: filter,
+                limit: limit
             );
 
             return searchResult.Select(r => r.Id.ToString()).ToList();
         }
 
-        private static readonly ChatTool searchProductsVectorized = ChatTool.CreateFunctionTool(
+        private static readonly ChatTool searchProductsVectorizedTool = ChatTool.CreateFunctionTool(
             functionName: nameof(SearchProductsVectorized),
-            functionDescription: "Pretrazi i dohvati top 5 proizvoda, tj. njihove id-jeve, iz vektorske baze podataka, po opisu koji je korisnik prosledio i koji je LLM potencijalno dodatno obradio.",
+            functionDescription: "Pretrazi i dohvati top {limit} proizvoda, tj. njihove id-jeve, iz vektorske baze podataka, po opisu koji je korisnik prosledio i koji je LLM potencijalno dodatno obradio.",
             functionParameters: BinaryData.FromBytes("""
             {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Opis koji je korisnik prosledio i koji je LLM potencijalno dodatno obradio"
+                        "description": "Pretraživački upit koji opisuje proizvode koje korisnik traži."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "description": "Maksimalan broj proizvoda za prikaz (1-10). Koristi manji broj (1-5) za specifične upite, veći (5-10) za opšte kategorije."
+                    },
+                    "priceLowerLimit": {
+                        "type": "integer",
+                        "description": "Minimalna cena u dinarima (opciono)"
+                    },
+                    "priceUpperLimit": {
+                        "type": "integer",
+                        "description": "Maksimalna cena u dinarima (opciono)"
                     }
                 },
-                "required": [ "query" ]
+                "required": [ "query", "limit" ]
             }
             """u8.ToArray())
         );
 
-        private async Task<ExternalProductDTO> SearchProductBySKU(string productSKU)
+        private async Task<List<ExternalProductDTO>> SearchProductsById(List<string> productIds)
         {
-            string url = $"{_externalApiBaseURL}&sku={productSKU}";
+            List<ExternalProductDTO> products = new();
 
-            // Configure headers
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", SettingsProvider.Current.ExternalApiBearerToken);
-
-            // Execute request
-            using HttpResponseMessage response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            string json = await response.Content.ReadAsStringAsync();
-
-            ExternalProductDTO product = JsonSerializer.Deserialize<ExternalProductDTO>(json);
-
-            return product;
-        }
-
-        private static readonly ChatTool searchProductBySKUTool = ChatTool.CreateFunctionTool(
-            functionName: nameof(SearchProductBySKU),
-            functionDescription: "Pretrazi i dohvati proizvod po njegovom SKU, ovaj tool treba da se koristi samo ako nam korisnik prosledi SKU proizvoda.",
-            functionParameters: BinaryData.FromBytes("""
+            foreach (string productId in productIds)
             {
-                "type": "object",
-                "properties": {
-                    "productSKU": {
-                        "type": "string",
-                        "description": "SKU proizvoda"
-                    }
-                },
-                "required": [ "productSKU" ]
+                ExternalProductDTO product = await SearchProductById(productId);
+                products.Add(product);
             }
-            """u8.ToArray())
-        );
+
+            return products;
+        }
 
         private async Task<ExternalProductDTO> SearchProductById(string productId)
         {
@@ -450,24 +473,55 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
             return product;
         }
 
-        private static readonly ChatTool searchProductByIdTool = ChatTool.CreateFunctionTool(
-            functionName: nameof(SearchProductById),
-            functionDescription: "Pretrazi i dohvati proizvod po njegovom Id, ovaj tool treba da se koristi samo ako nakon sto smo pretragom vektorske baze podataka dobili listu id-jeva.",
+        private static readonly ChatTool searchProductsByIdTool = ChatTool.CreateFunctionTool(
+            functionName: nameof(SearchProductsById),
+            functionDescription: "Pretraži i dohvati proizvode po njegovom Id-ju, ovaj tool treba da se koristi samo ako nakon što smo pretragom vektorske baze podataka dobili listu id-jeva.",
             functionParameters: BinaryData.FromBytes("""
             {
                 "type": "object",
                 "properties": {
-                    "productId": {
-                        "type": "string",
-                        "description": "Id proizvoda"
+                    "productIds": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Lista ID-jeva proizvoda dobijenih pretragom vektorske baze podataka."
                     }
                 },
-                "required": [ "productId" ]
+                "required": [ "productIds" ]
             }
             """u8.ToArray())
         );
 
         #endregion
+
+        private List<ChatMessage> PrepareChat(List<ChatMessage> chatHistory, string userPrompt)
+        {
+            List<ChatMessage> chat = new();
+
+            if (chatHistory == null || !chatHistory.Any(m => m is SystemChatMessage))
+            {
+                chat.Add(new SystemChatMessage(_systemPromptTemplate));
+            }
+
+            if (chatHistory?.Count > 0)
+            {
+                List<ChatMessage> relevantHistory = chatHistory
+                    .Where(m => !(m is SystemChatMessage))
+                    .ToList();
+
+                if (relevantHistory.Count > 20)
+                {
+                    _logger.LogInformation("Skraćivanje istorije sa {Count} na 20 poruka", relevantHistory.Count);
+                    relevantHistory = relevantHistory.Skip(relevantHistory.Count - 20).ToList();
+                }
+
+                chat.AddRange(relevantHistory);
+            }
+
+            chat.Add(new UserChatMessage(userPrompt));
+            return chat;
+        }
 
         private static List<QdrantProductDTO> LoadProducts(string path)
         {
@@ -485,17 +539,32 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
         private async Task SaveProductsToVectorDb(List<QdrantProductDTO> products)
         {
             if (!await _qdrantClient.CollectionExistsAsync(SettingsProvider.Current.QdrantProductsTableName))
+            {
                 await _qdrantClient.CreateCollectionAsync(SettingsProvider.Current.QdrantProductsTableName, new VectorParams { Size = 3072, Distance = Distance.Cosine });
 
+                await _qdrantClient.CreatePayloadIndexAsync(
+                    collectionName: SettingsProvider.Current.QdrantProductsTableName,
+                    fieldName: "price",
+                    schemaType: PayloadSchemaType.Integer
+                );
+            }
             int batchSize = 100;
             for (int i = 0; i < products.Count; i += batchSize)
             {
+                if (i < 3100)
+                    continue;
                 List<QdrantProductDTO> batch = products.Skip(i).Take(batchSize).ToList();
                 List<PointStruct> points = new();
 
                 foreach (QdrantProductDTO product in batch)
                 {
+                    if (string.IsNullOrEmpty(product.Text))
+                        continue;
+
                     ReadOnlyMemory<float> embedding = await GetEmbeddingAsync(product.Text);
+
+                    if (embedding.IsEmpty)
+                        continue;
 
                     points.Add(new PointStruct
                     {
@@ -517,6 +586,9 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
                 return ReadOnlyMemory<float>.Empty;
 
             List<string> chunks = LlmHtmlProcessor.HtmlToLlmMarkdown(text);
+
+            if (chunks.Count == 0)
+                return ReadOnlyMemory<float>.Empty;
 
             List<ReadOnlyMemory<float>> vectors = new();
 
@@ -543,11 +615,23 @@ Probaj da one shot-ujes odgovor u vecini slucajeva, ako je korisnik bas bio neod
             return new ReadOnlyMemory<float>(avg);
         }
 
-        private string PrepareProductForContext(ExternalProductDTO productDTO)
+        private async Task<string> GetMarkdownFormattedProducts(List<string> ids)
+        {
+            List<string> result = new();
+
+            foreach (string id in ids)
+            {
+                ExternalProductDTO externalProductDTO = await SearchProductById(id);
+                result.Add(GetMarkdownFormattedProduct(externalProductDTO));
+            }
+
+            return string.Join(", ", result);
+        }
+
+        private string GetMarkdownFormattedProduct(ExternalProductDTO productDTO)
         {
             return $$"""
-Product name: {{productDTO.title}}
-Product url: {{productDTO.url}}
+({{productDTO.url}})[{{productDTO.title}}]
 """;
         }
 
