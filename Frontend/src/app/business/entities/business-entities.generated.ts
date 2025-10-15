@@ -72,24 +72,28 @@ export class AgentMainUIForm extends BaseEntity
 }
 
 
-export class ExternalProduct extends BaseEntity
+export class Message extends BaseEntity
 {
-    title?: string;
-	url?: string;
+    content?: string;
+	role?: string;
+	chatHistory?: Message[];
 
     constructor(
     {
-        title,
-		url
+        content,
+		role,
+		chatHistory
     }:{
-        title?: string;
-		url?: string;     
+        content?: string;
+		role?: string;
+		chatHistory?: Message[];     
     } = {}
     ) {
-        super('ExternalProduct'); 
+        super('Message'); 
 
-        this.title = title;
-		this.url = url;
+        this.content = content;
+		this.role = role;
+		this.chatHistory = chatHistory;
     }
 }
 

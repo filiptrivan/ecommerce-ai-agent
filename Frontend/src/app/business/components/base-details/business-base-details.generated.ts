@@ -13,7 +13,7 @@ import { combineLatest, firstValueFrom, forkJoin, map, Observable, of, Subscript
 import { MenuItem } from 'primeng/api';
 import { AuthService } from '../../services/auth/auth.service';
 import { SpiderlyControlsModule, CardSkeletonComponent, IndexCardComponent, IsAuthorizedForSaveEvent, SpiderlyDataTableComponent, SpiderlyFormArray, BaseEntity, LastMenuIconIndexClicked, SpiderlyFormGroup, SpiderlyButton, nameof, BaseFormService, getControl, Column, Filter, LazyLoadSelectedIdsResult, AllClickEvent, SpiderlyFileSelectEvent, getPrimengDropdownNamebookOptions, PrimengOption, SpiderlyFormControl, getPrimengAutocompleteNamebookOptions } from 'spiderly';
-import { ExternalProduct, Notification, NotificationSaveBody, QdrantProduct, Agent, User, UserNotification, AgentSaveBody, UserSaveBody, UserNotificationSaveBody } from '../../entities/business-entities.generated';
+import { Message, Notification, NotificationSaveBody, QdrantProduct, Agent, User, UserNotification, AgentSaveBody, UserSaveBody, UserNotificationSaveBody } from '../../entities/business-entities.generated';
 
 @Component({
     selector: 'agent-base-details',

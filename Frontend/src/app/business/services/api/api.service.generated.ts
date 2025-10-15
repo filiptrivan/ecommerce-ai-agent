@@ -3,10 +3,10 @@ import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiSecurityService, Filter, PaginatedResult, Namebook, Codebook, LazyLoadSelectedIdsResult, VerificationTokenRequest, AuthResult, ExternalProvider } from 'spiderly';
 import { ConfigService } from '../config.service';
-import { NotificationSaveBody } from '../../entities/business-entities.generated';
 import { Notification } from '../../entities/business-entities.generated';
+import { NotificationSaveBody } from '../../entities/business-entities.generated';
 import { QdrantProduct } from '../../entities/business-entities.generated';
-import { ExternalProduct } from '../../entities/business-entities.generated';
+import { Message } from '../../entities/business-entities.generated';
 import { Agent } from '../../entities/business-entities.generated';
 import { AgentSaveBody } from '../../entities/business-entities.generated';
 import { AgentMainUIForm } from '../../entities/business-entities.generated';
@@ -34,8 +34,8 @@ export class ApiGeneratedService extends ApiSecurityService {
         return this.http.get(`${this.config.apiUrl}/Agent/SaveProductsToVectorDb`, this.config.httpOptions);
     }
 
-    sendMessage = (userPrompt: string): Observable<string> => { 
-        return this.http.get(`${this.config.apiUrl}/Agent/SendMessage?userPrompt=${userPrompt}`, { ...this.config.httpOptions, responseType: 'text' });
+    sendMessage = (messageDTO: Message): Observable<string> => { 
+        return this.http.post(`${this.config.apiUrl}/Agent/SendMessage`, messageDTO, { ...this.config.httpOptions, responseType: 'text' });
     }
 
     sendNotificationEmail = (notificationId: number, notificationVersion: number): Observable<any> => { 
@@ -62,45 +62,6 @@ export class ApiGeneratedService extends ApiSecurityService {
         return this.http.get<User>(`${this.config.apiUrl}/User/GetCurrentUser`, this.config.httpSkipSpinnerOptions);
     }
 
-
-
-    getPaginatedUserList = (filterDTO: Filter): Observable<PaginatedResult<User>> => { 
-        return this.http.post<PaginatedResult<User>>(`${this.config.apiUrl}/User/GetPaginatedUserList`, filterDTO, this.config.httpSkipSpinnerOptions);
-    }
-
-    exportUserListToExcel = (filterDTO: Filter): Observable<any> => { 
-        return this.http.post(`${this.config.apiUrl}/User/ExportUserListToExcel`, filterDTO, { observe: 'response', responseType: 'blob' });
-    }
-
-    getUserList = (): Observable<User[]> => { 
-        return this.http.get<User[]>(`${this.config.apiUrl}/User/GetUserList`, this.config.httpOptions);
-    }
-
-    getUserMainUIFormDTO = (id: number): Observable<UserMainUIForm> => { 
-        return this.http.get<UserMainUIForm>(`${this.config.apiUrl}/User/GetUserMainUIFormDTO?id=${id}`, this.config.httpOptions);
-    }
-
-    getUser = (id: number): Observable<User> => { 
-        return this.http.get<User>(`${this.config.apiUrl}/User/GetUser?id=${id}`, this.config.httpOptions);
-    }
-
-
-
-
-
-
-
-
-
-    saveUser = (saveBodyDTO: UserSaveBody): Observable<UserSaveBody> => { 
-        return this.http.put<UserSaveBody>(`${this.config.apiUrl}/User/SaveUser`, saveBodyDTO, this.config.httpOptions);
-    }
-
-
-
-    deleteUser = (id: number): Observable<any> => { 
-        return this.http.delete(`${this.config.apiUrl}/User/DeleteUser?id=${id}`, this.config.httpOptions);
-    }
 
 
     getPaginatedNotificationList = (filterDTO: Filter): Observable<PaginatedResult<Notification>> => { 
@@ -188,6 +149,45 @@ export class ApiGeneratedService extends ApiSecurityService {
 
     deleteAgent = (id: number): Observable<any> => { 
         return this.http.delete(`${this.config.apiUrl}/Agent/DeleteAgent?id=${id}`, this.config.httpOptions);
+    }
+
+
+    getPaginatedUserList = (filterDTO: Filter): Observable<PaginatedResult<User>> => { 
+        return this.http.post<PaginatedResult<User>>(`${this.config.apiUrl}/User/GetPaginatedUserList`, filterDTO, this.config.httpSkipSpinnerOptions);
+    }
+
+    exportUserListToExcel = (filterDTO: Filter): Observable<any> => { 
+        return this.http.post(`${this.config.apiUrl}/User/ExportUserListToExcel`, filterDTO, { observe: 'response', responseType: 'blob' });
+    }
+
+    getUserList = (): Observable<User[]> => { 
+        return this.http.get<User[]>(`${this.config.apiUrl}/User/GetUserList`, this.config.httpOptions);
+    }
+
+    getUserMainUIFormDTO = (id: number): Observable<UserMainUIForm> => { 
+        return this.http.get<UserMainUIForm>(`${this.config.apiUrl}/User/GetUserMainUIFormDTO?id=${id}`, this.config.httpOptions);
+    }
+
+    getUser = (id: number): Observable<User> => { 
+        return this.http.get<User>(`${this.config.apiUrl}/User/GetUser?id=${id}`, this.config.httpOptions);
+    }
+
+
+
+
+
+
+
+
+
+    saveUser = (saveBodyDTO: UserSaveBody): Observable<UserSaveBody> => { 
+        return this.http.put<UserSaveBody>(`${this.config.apiUrl}/User/SaveUser`, saveBodyDTO, this.config.httpOptions);
+    }
+
+
+
+    deleteUser = (id: number): Observable<any> => { 
+        return this.http.delete(`${this.config.apiUrl}/User/DeleteUser?id=${id}`, this.config.httpOptions);
     }
 
 

@@ -52,10 +52,6 @@ export class TranslateLabelsGeneratedService {
                 return this.translocoService.translate('DataStartColumn');
             case 'createNewDataRows':
                 return this.translocoService.translate('CreateNewDataRows');
-            case 'title':
-                return this.translocoService.translate('title');
-            case 'url':
-                return this.translocoService.translate('url');
             case 'idToken':
                 return this.translocoService.translate('IdToken');
             case 'browser':
@@ -92,6 +88,12 @@ export class TranslateLabelsGeneratedService {
                 return this.translocoService.translate('TotalRecordsSelected');
             case 'expireAt':
                 return this.translocoService.translate('ExpireAt');
+            case 'content':
+                return this.translocoService.translate('Content');
+            case 'role':
+                return this.translocoService.translate('Role');
+            case 'chatHistory':
+                return this.translocoService.translate('ChatHistory');
             case 'isMarkedAsRead':
                 return this.translocoService.translate('IsMarkedAsRead');
             case 'title':
@@ -140,8 +142,6 @@ export class TranslateLabelsGeneratedService {
                 return this.translocoService.translate('RoleDTO');
             case 'permissionsNamebookDTOList':
                 return this.translocoService.translate('PermissionsNamebookDTOList');
-            case 'role':
-                return this.translocoService.translate('Role');
             case 'permission':
                 return this.translocoService.translate('Permission');
             case 'rolePermissionDTO':

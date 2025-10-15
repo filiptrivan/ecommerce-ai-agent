@@ -33,11 +33,11 @@ namespace EcommerceAIAgent.WebAPI.Controllers
             await _ecommerceAIAgentBusinessService.SaveProductsToVectorDb();
         }
 
-        [HttpGet]
+        [HttpPost]
         [AuthGuard]
-        public async Task<string> SendMessage(string userPrompt)
+        public async Task<string> SendMessage(MessageDTO messageDTO)
         {
-            return await _ecommerceAIAgentBusinessService.SendMessage(null, userPrompt);
+            return await _ecommerceAIAgentBusinessService.SendMessage(messageDTO);
         }
     }
 }

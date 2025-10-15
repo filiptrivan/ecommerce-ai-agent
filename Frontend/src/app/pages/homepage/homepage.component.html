@@ -2,7 +2,9 @@
 
     <spiderly-button label="Save products to db" (onClick)="saveProductsToDb()"></spiderly-button>
 
-    {{response}}
+    <div *ngFor="let message of chat" style="margin-top: 20px;">
+        {{message.role}}: {{message.content}}
+    </div>
 
     <div style="position: absolute; bottom: 100px; width: 100%;">
         <textarea pInputText [(ngModel)]="prompt" style="width: 100%;"></textarea>

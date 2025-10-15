@@ -28,8 +28,6 @@ export class TranslateClassNamesGeneratedService {
                 return this.translocoService.translate('Codebook');
             case 'ExcelReportOptions':
                 return this.translocoService.translate('ExcelReportOptions');
-            case 'ExternalProduct':
-                return this.translocoService.translate('ExternalProduct');
             case 'ExternalProvider':
                 return this.translocoService.translate('ExternalProvider');
             case 'Filter':
@@ -46,6 +44,8 @@ export class TranslateClassNamesGeneratedService {
                 return this.translocoService.translate('Login');
             case 'LoginVerificationToken':
                 return this.translocoService.translate('LoginVerificationToken');
+            case 'Message':
+                return this.translocoService.translate('Message');
             case 'Namebook':
                 return this.translocoService.translate('Namebook');
             case 'Notification':

@@ -5,6 +5,8 @@ import { InfoCardComponent, SpiderlyButtonComponent } from 'spiderly';
 import { ConfigService } from 'src/app/business/services/config.service';
 import { FormsModule } from "@angular/forms";
 import { ApiService } from 'src/app/business/services/api/api.service';
+import { CommonModule } from '@angular/common';
+import { Message } from 'src/app/business/entities/business-entities.generated';
 
 @Component({
     templateUrl: './homepage.component.html',
@@ -13,14 +15,15 @@ import { ApiService } from 'src/app/business/services/api/api.service';
     TranslocoDirective,
     InputTextModule,
     FormsModule,
-    SpiderlyButtonComponent
+    SpiderlyButtonComponent,
+    CommonModule,
 ],
 })
 export class HomepageComponent implements OnInit {
   companyName = this.config.companyName;
 
   prompt: string;
-  response: string;
+  chat: Message[] = [];
 
   constructor(
     private config: ConfigService,
@@ -36,8 +39,20 @@ export class HomepageComponent implements OnInit {
   }
 
   sendMessage = () => {
-    this.apiService.sendMessage(this.prompt).subscribe((response) => {
-      this.response = response;
+    const message: Message = {
+      content: this.prompt, 
+      role: 'user',
+    };
+    
+    const body = {
+      ...message, 
+      chatHistory: [...this.chat]
+    };
+    
+    this.chat.push(message);
+
+    this.apiService.sendMessage(body).subscribe((response) => {
+      this.chat.push({content: response, role: 'agent'});
     });
   }
 

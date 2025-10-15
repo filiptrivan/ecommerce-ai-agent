@@ -28,6 +28,8 @@ using EcommerceAIAgent.Shared;
 using EcommerceAIAgent.Business.LlmResponses;
 using Google.Protobuf;
 using Microsoft.Extensions.Options;
+using EcommerceAIAgent.Business.ExternalDTO;
+using Google.Protobuf.WellKnownTypes;
 
 namespace EcommerceAIAgent.Business.Services
 {
@@ -46,21 +48,29 @@ namespace EcommerceAIAgent.Business.Services
         private readonly EmbeddingClient _openAIEmbeddingClient;
         private readonly QdrantClient _qdrantClient;
 
-        private readonly string _externalApiBaseURL = "https://api.readycms.io/GET/products/short/?namespace=prodavnicaalata";
+        private readonly string _externalApiBaseURL = "https://api.readycms.io";
+        private readonly string _externalApiNamespace = "prodavnicaalata";
 
         private const string _systemPromptTemplate = """
 Ti si profesionalni web shop prodavac na sajtu www.prodavnicaalata.rs.
+Prodajes masine, alata, usisivace, elektricni, akumulatorski alat, kosilice, brusilice, pribor...
 Imaš dva maloprodajna objekta:
 - Vojislava Ilića 141g
 - Na Altini - Ugrinovačka 212
 
 VAŽNA PRAVILA:
 - Odgovaraj direktno i profesionalno
+- Krajnji odgovor korisniku lepo upakuj u markdown
 - Nikad ne prikazuj ID proizvoda
 - Ako korisnik nije precizan, postavi jedno ili dva dodatna pitanja
 - Koristi funkcije za pretraživanje proizvoda kada je potrebno, ako ih ne nađeš iz prvog pokušaja, nema potrebe da ponavljaš pretragu sa sličnim upitom više puta, samo obavesti korisnika da nisi uspeo da pronađeš.
 - Ne spominji tehničke detalje (vektorska baza, ID-jeve, itd.)
 - Ako korisnik pita neko opšte pitanje o proizvodu iskoristi svoj osnovni model za odgovor.
+- Korisniku ne prikazuj proizvode kojih nema na stanju (kad ih dohvatis putem id-ja stock mora da bude veci od 0)
+- Pretragu iz vektorske baze podataka vrsis kad te korisnik pita bilo sta o nasim proizvodima, iz nje ces kao rezultat dobiti id-jeve putem kojih treba da pretrazis real time produkcionu bazu podataka i iz nje ces dobiti vise informacija o tim proizvodima.
+- Kad korisniku vracas neki proizvod uvek navedi barem ime, a kad je potrebno i ostale detalje proizvoda
+- Ako ti korisnik trazi da uporedis neke proizvode poredjenje prikazi u tabelarnom prikazu
+- Cenu i stanje proizvoda nikad ne citas odmah nakon vektorske pretrage, uvek za krajnji prikaz korisniku treba da proveris live produkcionu bazu podataka (pretraga putem id-ja nakon pretrage vektorske)
 """;
 
         public EcommerceAIAgentBusinessService(
@@ -85,7 +95,7 @@ VAŽNA PRAVILA:
             _httpClient = new HttpClient();
 
             OpenAIClient openAIClient = new OpenAIClient(SettingsProvider.Current.OpenAIApiKey);
-            _openAIChatClient = openAIClient.GetChatClient("gpt-5-nano");
+            _openAIChatClient = openAIClient.GetChatClient("gpt-4.1-nano");
             _openAIEmbeddingClient = openAIClient.GetEmbeddingClient("text-embedding-3-large");
             _qdrantClient = new QdrantClient(
               host: "e1af4fc9-8280-49ad-b76c-8e2e2f5849ae.europe-west3-0.gcp.cloud.qdrant.io",
@@ -263,9 +273,9 @@ VAŽNA PRAVILA:
             await SaveProductsToVectorDb(products);
         }
 
-        public async Task<string> SendMessage(List<ChatMessage> chatHistory, string userPrompt)
+        public async Task<string> SendMessage(MessageDTO messageDTO)
         {
-            List<ChatMessage> chat = PrepareChat(chatHistory, userPrompt);
+            List<ChatMessage> chat = PrepareChat(messageDTO.ChatHistory, messageDTO.Content);
             ChatCompletionOptions options = new()
             {
                 Tools =
@@ -311,14 +321,14 @@ VAŽNA PRAVILA:
                                             if (!hasLimit)
                                                 throw new ArgumentNullException(nameof(limit), $"The {nameof(limit)} argument is required.");
 
-                                            List<string> toolResult = await SearchProductsVectorized(
+                                            string toolResult = await SearchProductsVectorized(
                                                 query.GetString(),
                                                 limit.GetUInt64(),
                                                 hasPriceLowerLimit ? priceLowerLimit.GetInt32() : null,
                                                 hasPriceUpperLimit ? priceUpperLimit.GetInt32() : null
                                             );
 
-                                            chat.Add(new ToolChatMessage(toolCall.Id, string.Join(", ", toolResult)));
+                                            chat.Add(new ToolChatMessage(toolCall.Id, toolResult));
                                             break;
                                         }
 
@@ -330,7 +340,7 @@ VAŽNA PRAVILA:
                                             if (!hasIds)
                                                 throw new ArgumentNullException(nameof(productIds), $"The {nameof(productIds)} argument is required.");
 
-                                            string toolResult = await GetMarkdownFormattedProducts(productIds.EnumerateArray()
+                                            string toolResult = await GetProductsAsJson(productIds.EnumerateArray()
                                                 .Select(x => x.GetString())
                                                 .ToList()
                                             );
@@ -363,7 +373,7 @@ VAŽNA PRAVILA:
 
         #region Tools
 
-        private async Task<List<string>> SearchProductsVectorized(
+        private async Task<string> SearchProductsVectorized(
             string query,
             ulong limit,
             int? priceLowerLimit = null,
@@ -376,7 +386,7 @@ VAŽNA PRAVILA:
 
             if (priceLowerLimit.HasValue || priceUpperLimit.HasValue)
             {
-                var range = new Qdrant.Client.Grpc.Range();
+                Qdrant.Client.Grpc.Range range = new();
 
                 if (priceLowerLimit.HasValue)
                     range.Gte = priceLowerLimit.Value;
@@ -400,14 +410,30 @@ VAŽNA PRAVILA:
                 };
             }
 
-            IReadOnlyList<ScoredPoint> searchResult = await _qdrantClient.SearchAsync(
+            IReadOnlyList<ScoredPoint> searchResults = await _qdrantClient.SearchAsync(
                 collectionName: SettingsProvider.Current.QdrantProductsTableName,
                 vector: embedding,
                 filter: filter,
                 limit: limit
             );
 
-            return searchResult.Select(r => r.Id.ToString()).ToList();
+            List<object> results = new();
+            for (int i = 0; i < searchResults.Count; i++)
+            {
+                ScoredPoint searchResult = searchResults[i];
+                results.Add(new
+                {
+                    index = i + 1,
+                    id = searchResult.Id.ToString(),
+                    score = searchResult.Score,
+                    priceEstimate = searchResult.Payload["price"]
+                });
+            }
+
+            return JsonSerializer.Serialize(results, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
         }
 
         private static readonly ChatTool searchProductsVectorizedTool = ChatTool.CreateFunctionTool(
@@ -448,7 +474,9 @@ VAŽNA PRAVILA:
             foreach (string productId in productIds)
             {
                 ExternalProductDTO product = await SearchProductById(productId);
-                products.Add(product);
+
+                if (product != null)
+                    products.Add(product);
             }
 
             return products;
@@ -456,7 +484,18 @@ VAŽNA PRAVILA:
 
         private async Task<ExternalProductDTO> SearchProductById(string productId)
         {
-            string url = $"{_externalApiBaseURL}&id={productId}";
+            string url = $"{_externalApiBaseURL}/GET/products/" +
+                $"?namespace={_externalApiNamespace}" +
+                $"&id={productId}" +
+                $"&status=Published" +
+                $"&hide_categories=true" +
+                $"&hide_seo=true" +
+                $"&hide_tags=true" +
+                $"&hide_manufacturer=true" +
+                $"&hide_items=true" +
+                $"&hide_attributes=true" +
+                $"&hide_locations=true" +
+                $"&hide_variations=true";
 
             // Configure headers
             using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -468,9 +507,17 @@ VAŽNA PRAVILA:
 
             string json = await response.Content.ReadAsStringAsync();
 
-            ExternalProductDTO product = JsonSerializer.Deserialize<ExternalProductDTO>(json);
+            ExternalProductsResponseDTO externalProductsResponseDTO = JsonSerializer.Deserialize<ExternalProductsResponseDTO>(json);
 
-            return product;
+            if (
+                externalProductsResponseDTO.data.products == null ||
+                externalProductsResponseDTO.data.products.Count == 0
+            )
+            {
+                return null;
+            }
+
+            return externalProductsResponseDTO.data.products[0];
         }
 
         private static readonly ChatTool searchProductsByIdTool = ChatTool.CreateFunctionTool(
@@ -495,28 +542,25 @@ VAŽNA PRAVILA:
 
         #endregion
 
-        private List<ChatMessage> PrepareChat(List<ChatMessage> chatHistory, string userPrompt)
+        private List<ChatMessage> PrepareChat(List<MessageDTO> chatHistory, string userPrompt)
         {
-            List<ChatMessage> chat = new();
-
-            if (chatHistory == null || !chatHistory.Any(m => m is SystemChatMessage))
-            {
-                chat.Add(new SystemChatMessage(_systemPromptTemplate));
-            }
+            List<ChatMessage> chat = [new SystemChatMessage(_systemPromptTemplate)];
 
             if (chatHistory?.Count > 0)
             {
-                List<ChatMessage> relevantHistory = chatHistory
-                    .Where(m => !(m is SystemChatMessage))
-                    .ToList();
-
-                if (relevantHistory.Count > 20)
+                if (chatHistory.Count > 20)
                 {
-                    _logger.LogInformation("Skraćivanje istorije sa {Count} na 20 poruka", relevantHistory.Count);
-                    relevantHistory = relevantHistory.Skip(relevantHistory.Count - 20).ToList();
+                    _logger.LogInformation("Skraćivanje istorije sa {Count} na 20 poruka", chatHistory.Count);
+                    chatHistory = chatHistory.Skip(chatHistory.Count - 20).ToList();
                 }
 
-                chat.AddRange(relevantHistory);
+                foreach (MessageDTO messageDTO in chatHistory)
+                {
+                    if (messageDTO.Role == "agent")
+                        chat.Add(new AssistantChatMessage(messageDTO.Content));
+                    else
+                        chat.Add(new UserChatMessage(messageDTO.Content));
+                }
             }
 
             chat.Add(new UserChatMessage(userPrompt));
@@ -615,24 +659,43 @@ VAŽNA PRAVILA:
             return new ReadOnlyMemory<float>(avg);
         }
 
-        private async Task<string> GetMarkdownFormattedProducts(List<string> ids)
+        private async Task<string> GetProductsAsJson(List<string> ids)
         {
-            List<string> result = new();
+            List<object> results = new();
 
-            foreach (string id in ids)
+            for (int i = 0; i < ids.Count; i++)
             {
-                ExternalProductDTO externalProductDTO = await SearchProductById(id);
-                result.Add(GetMarkdownFormattedProduct(externalProductDTO));
+                string id = ids[i];
+                ExternalProductDTO externalProdcutDTO = await SearchProductById(id);
+
+                if (externalProdcutDTO == null)
+                {
+                    results.Add(new
+                    {
+                        index = i + 1,
+                        id = id,
+                        found = false
+                    });
+                }
+                else
+                {
+                    results.Add(new
+                    {
+                        index = i + 1,
+                        id = id,
+                        found = true,
+                        name = externalProdcutDTO.title,
+                        price = externalProdcutDTO.price,
+                        url = externalProdcutDTO.url,
+                        stock = externalProdcutDTO.stock,
+                    });
+                }
             }
 
-            return string.Join(", ", result);
-        }
-
-        private string GetMarkdownFormattedProduct(ExternalProductDTO productDTO)
-        {
-            return $$"""
-({{productDTO.url}})[{{productDTO.title}}]
-""";
+            return JsonSerializer.Serialize(results, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
         }
 
         #endregion
