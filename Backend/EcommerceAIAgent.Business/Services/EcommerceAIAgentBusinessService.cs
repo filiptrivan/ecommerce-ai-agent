@@ -30,6 +30,7 @@ using Google.Protobuf;
 using Microsoft.Extensions.Options;
 using EcommerceAIAgent.Business.ExternalDTO;
 using Google.Protobuf.WellKnownTypes;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace EcommerceAIAgent.Business.Services
 {
@@ -51,26 +52,45 @@ namespace EcommerceAIAgent.Business.Services
         private readonly string _externalApiBaseURL = "https://api.readycms.io";
         private readonly string _externalApiNamespace = "prodavnicaalata";
 
-        private const string _systemPromptTemplate = """
+        private const string _systemPromptTemplate = $$"""
 Ti si profesionalni web shop prodavac na sajtu www.prodavnicaalata.rs.
-Prodajes masine, alata, usisivace, elektricni, akumulatorski alat, kosilice, brusilice, pribor...
+Kupci se uživo dopisuju sa tobom, moraš brzo da odgovaraš.
+Prodaješ mašine, alate, usisivace, elektricni, akumulatorski alat, kosilice, brusilice, pribor...
 Imaš dva maloprodajna objekta:
 - Vojislava Ilića 141g
 - Na Altini - Ugrinovačka 212
 
-VAŽNA PRAVILA:
-- Odgovaraj direktno i profesionalno
+Važna pravila:
+- Odgovaraj direktno i profesionalno, kad god mozes se potrudi da ne postavljas dodatna pitanja
 - Krajnji odgovor korisniku lepo upakuj u markdown
-- Nikad ne prikazuj ID proizvoda
-- Ako korisnik nije precizan, postavi jedno ili dva dodatna pitanja
-- Koristi funkcije za pretraživanje proizvoda kada je potrebno, ako ih ne nađeš iz prvog pokušaja, nema potrebe da ponavljaš pretragu sa sličnim upitom više puta, samo obavesti korisnika da nisi uspeo da pronađeš.
+- Samo ako korisnik nije precizan postavi dodatno pitanje
+- Ako korisnik pita za nešto čime se ne bavimo i nemamo u asortimanu, izvini mu se i reci da se ne bavimo sa tim. Ovo može da bude očigledno, npr. ako te neko pita za patike očigledno je da se ne bavimo time i možeš odmah da mu odgovoriš, ali npr. ako pita za nameštaj, prvo proveri pretraživanjem putem {{nameof(SearchProductsVectorized)}} tool-a.
 - Ne spominji tehničke detalje (vektorska baza, ID-jeve, itd.)
 - Ako korisnik pita neko opšte pitanje o proizvodu iskoristi svoj osnovni model za odgovor.
-- Korisniku ne prikazuj proizvode kojih nema na stanju (kad ih dohvatis putem id-ja stock mora da bude veci od 0)
-- Pretragu iz vektorske baze podataka vrsis kad te korisnik pita bilo sta o nasim proizvodima, iz nje ces kao rezultat dobiti id-jeve putem kojih treba da pretrazis real time produkcionu bazu podataka i iz nje ces dobiti vise informacija o tim proizvodima.
 - Kad korisniku vracas neki proizvod uvek navedi barem ime, a kad je potrebno i ostale detalje proizvoda
 - Ako ti korisnik trazi da uporedis neke proizvode poredjenje prikazi u tabelarnom prikazu
-- Cenu i stanje proizvoda nikad ne citas odmah nakon vektorske pretrage, uvek za krajnji prikaz korisniku treba da proveris live produkcionu bazu podataka (pretraga putem id-ja nakon pretrage vektorske)
+
+Primeri: 
+Primer 1:
+Korisnik: Tražim štapni usisivač po povoljnoj ceni
+Asistent: Da li želite bežični ili električni?
+Korisnik: Električni
+Asistent: Najpovoljniji bežični štapni usisivač je: (https://www.prodavnicaalata.rs/proizvodi/einhell-te-sv-18-li-solo-akumulatorski-stapni-usisivac-bez-baterije-i-punjaca/)[Einhell TE-SV 18 Li-Solo Akumulatorski štapni usisivač, bez baterije i punjača - 12.320 RSD].
+Korisnik: Daj još neki
+Asistent: Naravno, evo još povoljnih proizvoda u našoj ponudi:
+1. (https://www.prodavnicaalata.rs/proizvodi/makita-dcl284fz-akumulatorski-stapni-usisivac-18-v-lxt-bez-baterije-i-punjaca/)[Makita DCL284FZ akumulatorski štapni usisivač, 18 V LXT, bez baterije i punjača - 19.170 RSD]
+2. (https://www.prodavnicaalata.rs/proizvodi/karcher-1198-7300-stapni-usisivac-450w/)[Kärcher 1.198-730.0 štapni usisivač, 450W - 21.849 RSD]
+3. (https://www.prodavnicaalata.rs/proizvodi/karcher-1198-6300-bezicni-stapni-usisivac-sa-posudom-650ml/)[Kärcher 1.198-630.0 bežični štapni usisivač sa posudom, 650ml - 22.799 RSD]
+
+Primer 2:
+Korisnik: Koje su vam najpovoljnije wc šolje?
+Sistem: Pretražuje wc šolje u vektorskoj bazi podataka, i vidi da je rezultat prazan.
+Asistent: Nažalost mi ne prodajemo WC šolje, ako ste zainteresovani za nešto drugo poput alata, mašina ili pribora mogu da vam pomognem :)
+
+Primer 3:
+Korisnik: Za šta se koristi hilti bušilica?
+Sistem: Shvata da je ovo opšte pitanje i koristi svoj osnovni model da bi vratio odgovor.
+Asistent: Hilti bušilice se koriste za bušenje čvrstih materijala poput betona, cigle i kamena, a zahvaljujući vibracionoj i udarnoj funkciji, mogu i da razbijaju materijal. Većina ljudi kad kaže "hilti" — misli na bilo koju udarnu bušilicu ili štemericu, bez obzira na marku.
 """;
 
         public EcommerceAIAgentBusinessService(
@@ -281,7 +301,6 @@ VAŽNA PRAVILA:
                 Tools =
                 {
                     searchProductsVectorizedTool,
-                    searchProductsByIdTool,
                 }
             };
 
@@ -326,23 +345,6 @@ VAŽNA PRAVILA:
                                                 limit.GetUInt64(),
                                                 hasPriceLowerLimit ? priceLowerLimit.GetInt32() : null,
                                                 hasPriceUpperLimit ? priceUpperLimit.GetInt32() : null
-                                            );
-
-                                            chat.Add(new ToolChatMessage(toolCall.Id, toolResult));
-                                            break;
-                                        }
-
-                                    case nameof(SearchProductsById):
-                                        {
-                                            using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
-                                            bool hasIds = argumentsJson.RootElement.TryGetProperty("productIds", out JsonElement productIds);
-
-                                            if (!hasIds)
-                                                throw new ArgumentNullException(nameof(productIds), $"The {nameof(productIds)} argument is required.");
-
-                                            string toolResult = await GetProductsAsJson(productIds.EnumerateArray()
-                                                .Select(x => x.GetString())
-                                                .ToList()
                                             );
 
                                             chat.Add(new ToolChatMessage(toolCall.Id, toolResult));
@@ -417,17 +419,37 @@ VAŽNA PRAVILA:
                 limit: limit
             );
 
+            double threshold = query.Length > 20 ? 0.5 : 0.4;
+
+            List<ScoredPoint> filteredResults = searchResults
+                .Where(x => x.Score >= threshold)
+                .ToList();
+
             List<object> results = new();
-            for (int i = 0; i < searchResults.Count; i++)
+            for (int i = 0; i < filteredResults.Count; i++)
             {
-                ScoredPoint searchResult = searchResults[i];
-                results.Add(new
+                ScoredPoint searchResult = filteredResults[i];
+                string productId = searchResult.Id.Num.ToString();
+
+                ExternalProductDTO externalProductDTO = await GetProductById(productId);
+
+                if (
+                    externalProductDTO != null &&
+                    externalProductDTO.stock > 0
+                )
                 {
-                    index = i + 1,
-                    id = searchResult.Id.ToString(),
-                    score = searchResult.Score,
-                    priceEstimate = searchResult.Payload["price"]
-                });
+                    results.Add(new
+                    {
+                        index = i + 1,
+                        productId = productId,
+                        productSimilarityScore = searchResult.Score,
+                        productPriceEstimate = searchResult.Payload["price"].StringValue,
+                        productName = externalProductDTO.title,
+                        exactProductPrice = externalProductDTO.price,
+                        productUrl = externalProductDTO.url,
+                        productStock = externalProductDTO.stock,
+                    });
+                }
             }
 
             return JsonSerializer.Serialize(results, new JsonSerializerOptions
@@ -438,7 +460,9 @@ VAŽNA PRAVILA:
 
         private static readonly ChatTool searchProductsVectorizedTool = ChatTool.CreateFunctionTool(
             functionName: nameof(SearchProductsVectorized),
-            functionDescription: "Pretrazi i dohvati top {limit} proizvoda, tj. njihove id-jeve, iz vektorske baze podataka, po opisu koji je korisnik prosledio i koji je LLM potencijalno dodatno obradio.",
+            functionDescription: """
+Koristi ovaj tool kad te korisnik pita bilo šta specifično o našim proizvodima. Pretraži i dohvati top {limit} proizvoda, iz vektorske baze podataka, po opisu koji je korisnik prosledio i koji si ako je bilo potrebno dodatno obradio. Nema potrebe da ponavljaš pretragu sa sličnim upitom više puta, samo obavesti korisnika da nisi uspeo da pronađeš i to je to.
+""",
             functionParameters: BinaryData.FromBytes("""
             {
                 "type": "object",
@@ -467,22 +491,7 @@ VAŽNA PRAVILA:
             """u8.ToArray())
         );
 
-        private async Task<List<ExternalProductDTO>> SearchProductsById(List<string> productIds)
-        {
-            List<ExternalProductDTO> products = new();
-
-            foreach (string productId in productIds)
-            {
-                ExternalProductDTO product = await SearchProductById(productId);
-
-                if (product != null)
-                    products.Add(product);
-            }
-
-            return products;
-        }
-
-        private async Task<ExternalProductDTO> SearchProductById(string productId)
+        private async Task<ExternalProductDTO> GetProductById(string productId)
         {
             string url = $"{_externalApiBaseURL}/GET/products/" +
                 $"?namespace={_externalApiNamespace}" +
@@ -509,6 +518,12 @@ VAŽNA PRAVILA:
 
             ExternalProductsResponseDTO externalProductsResponseDTO = JsonSerializer.Deserialize<ExternalProductsResponseDTO>(json);
 
+            if (externalProductsResponseDTO == null)
+                return null;
+
+            if (externalProductsResponseDTO.data == null)
+                return null;
+
             if (
                 externalProductsResponseDTO.data.products == null ||
                 externalProductsResponseDTO.data.products.Count == 0
@@ -519,26 +534,6 @@ VAŽNA PRAVILA:
 
             return externalProductsResponseDTO.data.products[0];
         }
-
-        private static readonly ChatTool searchProductsByIdTool = ChatTool.CreateFunctionTool(
-            functionName: nameof(SearchProductsById),
-            functionDescription: "Pretraži i dohvati proizvode po njegovom Id-ju, ovaj tool treba da se koristi samo ako nakon što smo pretragom vektorske baze podataka dobili listu id-jeva.",
-            functionParameters: BinaryData.FromBytes("""
-            {
-                "type": "object",
-                "properties": {
-                    "productIds": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "description": "Lista ID-jeva proizvoda dobijenih pretragom vektorske baze podataka."
-                    }
-                },
-                "required": [ "productIds" ]
-            }
-            """u8.ToArray())
-        );
 
         #endregion
 
@@ -657,45 +652,6 @@ VAŽNA PRAVILA:
                 avg[i] /= vectors.Count;
 
             return new ReadOnlyMemory<float>(avg);
-        }
-
-        private async Task<string> GetProductsAsJson(List<string> ids)
-        {
-            List<object> results = new();
-
-            for (int i = 0; i < ids.Count; i++)
-            {
-                string id = ids[i];
-                ExternalProductDTO externalProdcutDTO = await SearchProductById(id);
-
-                if (externalProdcutDTO == null)
-                {
-                    results.Add(new
-                    {
-                        index = i + 1,
-                        id = id,
-                        found = false
-                    });
-                }
-                else
-                {
-                    results.Add(new
-                    {
-                        index = i + 1,
-                        id = id,
-                        found = true,
-                        name = externalProdcutDTO.title,
-                        price = externalProdcutDTO.price,
-                        url = externalProdcutDTO.url,
-                        stock = externalProdcutDTO.stock,
-                    });
-                }
-            }
-
-            return JsonSerializer.Serialize(results, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
         }
 
         #endregion
