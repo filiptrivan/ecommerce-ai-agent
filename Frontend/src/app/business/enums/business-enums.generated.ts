@@ -19,4 +19,10 @@ export enum BusinessPermissionCodes
 	DeleteUserNotification = "DeleteUserNotification",
 }
 
+export enum MessageRoleCodes
+{
+    Agent = "Agent",
+	User = "User",
+}
+
 

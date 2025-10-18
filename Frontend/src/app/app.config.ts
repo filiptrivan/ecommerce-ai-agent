@@ -15,6 +15,7 @@ import { ValidatorService } from './business/services/validators/validators';
 import { AuthService } from 'src/app/business/services/auth/auth.service';
 import { ConfigService } from './business/services/config.service';
 import { LayoutService } from './business/services/layout/layout.service';
+import { provideMarkdown } from 'ngx-markdown';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -94,5 +95,6 @@ export const appConfig: ApplicationConfig = {
       jwtInterceptor,
       unauthorizedInterceptor,
     ])),
+    provideMarkdown()
   ]
 };

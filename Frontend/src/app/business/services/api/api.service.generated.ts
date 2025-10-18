@@ -62,8 +62,6 @@ export class ApiGeneratedService extends ApiSecurityService {
         return this.http.get<User>(`${this.config.apiUrl}/User/GetCurrentUser`, this.config.httpSkipSpinnerOptions);
     }
 
-
-
     getPaginatedAgentList = (filterDTO: Filter): Observable<PaginatedResult<Agent>> => { 
         return this.http.post<PaginatedResult<Agent>>(`${this.config.apiUrl}/Agent/GetPaginatedAgentList`, filterDTO, this.config.httpSkipSpinnerOptions);
     }
@@ -189,6 +187,8 @@ export class ApiGeneratedService extends ApiSecurityService {
     deleteUser = (id: number): Observable<any> => { 
         return this.http.delete(`${this.config.apiUrl}/User/DeleteUser?id=${id}`, this.config.httpOptions);
     }
+
+
 
 
 }

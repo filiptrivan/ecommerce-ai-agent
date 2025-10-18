@@ -55,17 +55,18 @@ Važna pravila:
 - Odgovaraj direktno i profesionalno, kad god mozes se potrudi da ne postavljas dodatna pitanja
 - Krajnji odgovor korisniku lepo upakuj u markdown
 - Samo ako korisnik nije precizan postavi dodatno pitanje
-- Ako korisnik pita za nešto čime se ne bavimo i nemamo u asortimanu, izvini mu se i reci da se ne bavimo sa tim. Ovo može da bude očigledno, npr. ako te neko pita za patike očigledno je da se ne bavimo time i možeš odmah da mu odgovoriš, ali npr. ako pita za nameštaj, prvo proveri pretraživanjem putem {{nameof(SearchProductsVectorized)}} tool-a.
+- Ako korisnik pita za nešto čime si sto posto siguran da se ne bavimo i nemamo u asortimanu, mu se izvini i reci da se ne bavimo sa tim npr. ako te neko pita za tastature/sminku/haljine očigledno je da se ne bavimo time i možeš odmah da mu odgovoriš, ali npr. ako pita za nešto što nisi siguran, prvo proveri pretraživanjem putem {{nameof(SearchProductsVectorized)}} tool-a.
 - Ne spominji tehničke detalje (vektorska baza, ID-jeve, itd.)
 - Ako korisnik pita neko opšte pitanje o proizvodu iskoristi svoj osnovni model za odgovor.
 - Kad korisniku vracas neki proizvod uvek navedi barem ime, a kad je potrebno i ostale detalje proizvoda
 - Ako ti korisnik trazi da uporedis neke proizvode poredjenje prikazi u tabelarnom prikazu
+- Ako proizvod ima sniženu cenu ({sale_price}), prikaži samo tu cenu. Cenu bez popusta prikaži samo ako korisnik to izričito zatraži (npr. pita za „punu cenu” ili „cenu pre popusta”).
 
 Primeri: 
 Primer 1:
 Korisnik: Tražim štapni usisivač po povoljnoj ceni
 Asistent: Da li želite bežični ili električni?
-Korisnik: Električni
+Korisnik: Bežični
 Asistent: Najpovoljniji bežični štapni usisivač je: (https://www.prodavnicaalata.rs/proizvodi/einhell-te-sv-18-li-solo-akumulatorski-stapni-usisivac-bez-baterije-i-punjaca/)[Einhell TE-SV 18 Li-Solo Akumulatorski štapni usisivač, bez baterije i punjača - 12.320 RSD].
 Korisnik: Daj još neki
 Asistent: Naravno, evo još povoljnih proizvoda u našoj ponudi:
@@ -430,7 +431,7 @@ Ako nema rezultata, jednostavno obavesti korisnika, bez ponovnog pokušaja pretr
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 15,
-                        "description": "Maksimalan broj proizvoda za prikaz (1-15). Koristi manji broj (1-10) za specifične upite, veći (10-15) za opšte kategorije."
+                        "description": "Maksimalan broj proizvoda za pretragu (1-15). Koristi manji broj (1-10) za specifične upite, veći (10-15) za opšte kategorije."
                     },
                     "shouldSortAscendingByPrice": {
                         "type": "boolean",
@@ -466,7 +467,7 @@ Ako nema rezultata, jednostavno obavesti korisnika, bez ponovnog pokušaja pretr
 
                 foreach (MessageDTO messageDTO in chatHistory)
                 {
-                    if (messageDTO.Role == "agent")
+                    if (messageDTO.Role == MessageRoleCodes.Agent)
                         chat.Add(new AssistantChatMessage(messageDTO.Content));
                     else
                         chat.Add(new UserChatMessage(messageDTO.Content));
