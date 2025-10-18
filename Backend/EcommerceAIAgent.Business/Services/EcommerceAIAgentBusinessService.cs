@@ -21,16 +21,7 @@ using CsvHelper.Configuration;
 using CsvHelper;
 using OpenAI.Embeddings;
 using Microsoft.Extensions.Logging;
-using OfficeOpenXml.FormulaParsing.Excel.Functions.Numeric;
-using System;
-using Newtonsoft.Json.Schema.Generation;
-using EcommerceAIAgent.Shared;
-using EcommerceAIAgent.Business.LlmResponses;
-using Google.Protobuf;
-using Microsoft.Extensions.Options;
 using EcommerceAIAgent.Business.ExternalDTO;
-using Google.Protobuf.WellKnownTypes;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace EcommerceAIAgent.Business.Services
 {
@@ -331,6 +322,7 @@ Asistent: Hilti bušilice se koriste za bušenje čvrstih materijala poput beton
                                             using JsonDocument argumentsJson = JsonDocument.Parse(toolCall.FunctionArguments);
                                             bool hasQuery = argumentsJson.RootElement.TryGetProperty("query", out JsonElement query);
                                             bool hasLimit = argumentsJson.RootElement.TryGetProperty("limit", out JsonElement limit);
+                                            bool hasShouldSortAscendingByPrice = argumentsJson.RootElement.TryGetProperty("shouldSortAscendingByPrice", out JsonElement shouldSortAscendingByPrice);
                                             bool hasPriceLowerLimit = argumentsJson.RootElement.TryGetProperty("priceLowerLimit", out JsonElement priceLowerLimit);
                                             bool hasPriceUpperLimit = argumentsJson.RootElement.TryGetProperty("priceUpperLimit", out JsonElement priceUpperLimit);
 
@@ -340,9 +332,13 @@ Asistent: Hilti bušilice se koriste za bušenje čvrstih materijala poput beton
                                             if (!hasLimit)
                                                 throw new ArgumentNullException(nameof(limit), $"The {nameof(limit)} argument is required.");
 
+                                            if (!hasShouldSortAscendingByPrice)
+                                                throw new ArgumentNullException(nameof(shouldSortAscendingByPrice), $"The {nameof(shouldSortAscendingByPrice)} argument is required.");
+
                                             string toolResult = await SearchProductsVectorized(
                                                 query.GetString(),
                                                 limit.GetUInt64(),
+                                                shouldSortAscendingByPrice.GetBoolean(),
                                                 hasPriceLowerLimit ? priceLowerLimit.GetInt32() : null,
                                                 hasPriceUpperLimit ? priceUpperLimit.GetInt32() : null
                                             );
@@ -378,79 +374,35 @@ Asistent: Hilti bušilice se koriste za bušenje čvrstih materijala poput beton
         private async Task<string> SearchProductsVectorized(
             string query,
             ulong limit,
+            bool shouldSortAscendingByPrice,
             int? priceLowerLimit = null,
             int? priceUpperLimit = null
         )
         {
             ReadOnlyMemory<float> embedding = await GetEmbeddingAsync(query);
 
-            Filter filter = null;
+            Filter filter = BuildPriceFilter(priceLowerLimit, priceUpperLimit);
 
-            if (priceLowerLimit.HasValue || priceUpperLimit.HasValue)
-            {
-                Qdrant.Client.Grpc.Range range = new();
-
-                if (priceLowerLimit.HasValue)
-                    range.Gte = priceLowerLimit.Value;
-
-                if (priceUpperLimit.HasValue)
-                    range.Lte = priceUpperLimit.Value;
-
-                filter = new Filter
-                {
-                    Must =
-                    {
-                        new Condition
-                        {
-                            Field = new FieldCondition
-                            {
-                                Key = "price",
-                                Range = range
-                            }
-                        }
-                    }
-                };
-            }
-
-            IReadOnlyList<ScoredPoint> searchResults = await _qdrantClient.SearchAsync(
+            IReadOnlyList<ScoredPoint> scoredPoints = await _qdrantClient.SearchAsync(
                 collectionName: SettingsProvider.Current.QdrantProductsTableName,
                 vector: embedding,
                 filter: filter,
-                limit: limit
+                limit: limit,
+                scoreThreshold: query.Length > 20 ? 0.5f : 0.4f
             );
 
-            double threshold = query.Length > 20 ? 0.5 : 0.4;
+            List<ExternalProductDTO> externalProductDTOList = await GetProducts(
+                scoredPoints.Select(x => x.Id.Num.ToString()).ToList()
+            );
 
-            List<ScoredPoint> filteredResults = searchResults
-                .Where(x => x.Score >= threshold)
-                .ToList();
-
-            List<object> results = new();
-            for (int i = 0; i < filteredResults.Count; i++)
+            if (shouldSortAscendingByPrice)
             {
-                ScoredPoint searchResult = filteredResults[i];
-                string productId = searchResult.Id.Num.ToString();
-
-                ExternalProductDTO externalProductDTO = await GetProductById(productId);
-
-                if (
-                    externalProductDTO != null &&
-                    externalProductDTO.stock > 0
-                )
-                {
-                    results.Add(new
-                    {
-                        index = i + 1,
-                        productId = productId,
-                        productSimilarityScore = searchResult.Score,
-                        productPriceEstimate = searchResult.Payload["price"].StringValue,
-                        productName = externalProductDTO.title,
-                        exactProductPrice = externalProductDTO.price,
-                        productUrl = externalProductDTO.url,
-                        productStock = externalProductDTO.stock,
-                    });
-                }
+                externalProductDTOList = externalProductDTOList
+                    .OrderBy(x => x.sale_price ?? x.price)
+                    .ToList();
             }
+
+            List<object> results = MapProductsToSearchResults(externalProductDTOList, scoredPoints);
 
             return JsonSerializer.Serialize(results, new JsonSerializerOptions
             {
@@ -461,7 +413,10 @@ Asistent: Hilti bušilice se koriste za bušenje čvrstih materijala poput beton
         private static readonly ChatTool searchProductsVectorizedTool = ChatTool.CreateFunctionTool(
             functionName: nameof(SearchProductsVectorized),
             functionDescription: """
-Koristi ovaj tool kad te korisnik pita bilo šta specifično o našim proizvodima. Pretraži i dohvati top {limit} proizvoda, iz vektorske baze podataka, po opisu koji je korisnik prosledio i koji si ako je bilo potrebno dodatno obradio. Nema potrebe da ponavljaš pretragu sa sličnim upitom više puta, samo obavesti korisnika da nisi uspeo da pronađeš i to je to.
+Koristi ovaj tool kada korisnik postavi pitanje ili upit vezan za naše proizvode.
+Tool pretražuje vektorsku bazu podataka koja sadrži detaljne opise proizvoda sa našeg sajta (u Markdown formatu), pa pre poziva treba da prilagodiš {query}.
+Vraća do {limit} proizvoda, sortirane po sličnosti sa korisnikovim upitom (od najrelevantnijeg do najmanje relevantnog).
+Ako nema rezultata, jednostavno obavesti korisnika, bez ponovnog pokušaja pretrage.
 """,
             functionParameters: BinaryData.FromBytes("""
             {
@@ -474,8 +429,12 @@ Koristi ovaj tool kad te korisnik pita bilo šta specifično o našim proizvodim
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 10,
-                        "description": "Maksimalan broj proizvoda za prikaz (1-10). Koristi manji broj (1-5) za specifične upite, veći (5-10) za opšte kategorije."
+                        "maximum": 15,
+                        "description": "Maksimalan broj proizvoda za prikaz (1-15). Koristi manji broj (1-10) za specifične upite, veći (10-15) za opšte kategorije."
+                    },
+                    "shouldSortAscendingByPrice": {
+                        "type": "boolean",
+                        "description": "Ako je true, proizvodi se sortiraju po ceni od najniže do najviše. Po defaultu (false) proizvodi se sortiraju po sličnosti."
                     },
                     "priceLowerLimit": {
                         "type": "integer",
@@ -486,54 +445,10 @@ Koristi ovaj tool kad te korisnik pita bilo šta specifično o našim proizvodim
                         "description": "Maksimalna cena u dinarima (opciono)"
                     }
                 },
-                "required": [ "query", "limit" ]
+                "required": [ "query", "limit", "shouldSortAscendingByPrice" ]
             }
             """u8.ToArray())
         );
-
-        private async Task<ExternalProductDTO> GetProductById(string productId)
-        {
-            string url = $"{_externalApiBaseURL}/GET/products/" +
-                $"?namespace={_externalApiNamespace}" +
-                $"&id={productId}" +
-                $"&status=Published" +
-                $"&hide_categories=true" +
-                $"&hide_seo=true" +
-                $"&hide_tags=true" +
-                $"&hide_manufacturer=true" +
-                $"&hide_items=true" +
-                $"&hide_attributes=true" +
-                $"&hide_locations=true" +
-                $"&hide_variations=true";
-
-            // Configure headers
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", SettingsProvider.Current.ExternalApiBearerToken);
-
-            // Execute request
-            using HttpResponseMessage response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            string json = await response.Content.ReadAsStringAsync();
-
-            ExternalProductsResponseDTO externalProductsResponseDTO = JsonSerializer.Deserialize<ExternalProductsResponseDTO>(json);
-
-            if (externalProductsResponseDTO == null)
-                return null;
-
-            if (externalProductsResponseDTO.data == null)
-                return null;
-
-            if (
-                externalProductsResponseDTO.data.products == null ||
-                externalProductsResponseDTO.data.products.Count == 0
-            )
-            {
-                return null;
-            }
-
-            return externalProductsResponseDTO.data.products[0];
-        }
 
         #endregion
 
@@ -652,6 +567,112 @@ Koristi ovaj tool kad te korisnik pita bilo šta specifično o našim proizvodim
                 avg[i] /= vectors.Count;
 
             return new ReadOnlyMemory<float>(avg);
+        }
+
+        private Filter BuildPriceFilter(int? priceLowerLimit, int? priceUpperLimit)
+        {
+            if (!priceLowerLimit.HasValue && !priceUpperLimit.HasValue)
+                return null;
+
+            Qdrant.Client.Grpc.Range range = new();
+
+            if (priceLowerLimit.HasValue)
+                range.Gte = priceLowerLimit.Value;
+
+            if (priceUpperLimit.HasValue)
+                range.Lte = priceUpperLimit.Value;
+
+            return new Filter
+            {
+                Must = {
+                    new Condition {
+                        Field = new FieldCondition {
+                            Key = "price", Range = range
+                        }
+                    }
+                }
+            };
+        }
+
+        private async Task<List<ExternalProductDTO>> GetProducts(List<string> productIds)
+        {
+            IEnumerable<Task<ExternalProductDTO>> tasks = productIds.Select(GetProductById);
+
+            ExternalProductDTO[] products = await Task.WhenAll(tasks);
+
+            return products.Where(p => p != null).ToList();
+        }
+
+        private async Task<ExternalProductDTO> GetProductById(string productId)
+        {
+            string url = $"{_externalApiBaseURL}/GET/products/" +
+                $"?namespace={_externalApiNamespace}" +
+                $"&id={productId}" +
+                $"&status=Published" +
+                $"&hide_categories=true" +
+                $"&hide_seo=true" +
+                $"&hide_tags=true" +
+                $"&hide_manufacturer=true" +
+                $"&hide_items=true" +
+                $"&hide_attributes=true" +
+                $"&hide_locations=true" +
+                $"&hide_variations=true";
+
+            // Configure headers
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", SettingsProvider.Current.ExternalApiBearerToken);
+
+            // Execute request
+            using HttpResponseMessage response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            string json = await response.Content.ReadAsStringAsync();
+
+            ExternalProductsResponseDTO externalProductsResponseDTO = JsonSerializer.Deserialize<ExternalProductsResponseDTO>(json);
+
+            if (externalProductsResponseDTO == null)
+                return null;
+
+            if (externalProductsResponseDTO.data == null)
+                return null;
+
+            if (
+                externalProductsResponseDTO.data.products == null ||
+                externalProductsResponseDTO.data.products.Count == 0
+            )
+            {
+                return null;
+            }
+
+            return externalProductsResponseDTO.data.products[0];
+        }
+
+        private List<object> MapProductsToSearchResults(
+            List<ExternalProductDTO> externalProductDTOList,
+            IReadOnlyList<ScoredPoint> scoredPoints
+        )
+        {
+            List<object> results = new();
+
+            for (int i = 0; i < externalProductDTOList.Count; i++)
+            {
+                ExternalProductDTO externalProductDTO = externalProductDTOList[i];
+
+                ScoredPoint searchResult = scoredPoints.Where(x => x.Id.Num == (ulong)externalProductDTO.id).Single();
+
+                results.Add(new
+                {
+                    index = i + 1,
+                    productSimilarityScore = searchResult.Score,
+                    productName = externalProductDTO.title,
+                    productPrice = externalProductDTO.price,
+                    saleProductPrice = externalProductDTO.sale_price,
+                    productUrl = externalProductDTO.url,
+                    productStock = externalProductDTO.stock,
+                });
+            }
+
+            return results;
         }
 
         #endregion
